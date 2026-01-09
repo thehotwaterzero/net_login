@@ -204,6 +204,15 @@ class MainWindow:
         # 初始化UI
         self.ui = MainWindowUI(self.root)
         
+        # 设置窗口图标（同时作用于窗口和任务栏）
+        icon_path = self.project_dir / "icon.png"
+        if icon_path.exists():
+            try:
+                icon_img = tk.PhotoImage(file=str(icon_path))
+                self.root.iconphoto(True, icon_img)
+            except Exception as e:
+                print(f"设置窗口图标失败: {e}")
+        
         # 连接事件
         self.ui.btn_test_login.config(command=self.test_login)
         self.ui.btn_monitor.config(command=self.toggle_monitor)
@@ -310,15 +319,20 @@ class MainWindow:
     
     def _create_tray_icon(self):
         """创建系统托盘图标"""
-        # 创建一个简单的图标
-        width = 64
-        height = 64
-        image = Image.new('RGB', (width, height), color='#1e90ff')
-        dc = ImageDraw.Draw(image)
+        # 尝试加载 icon.png
+        icon_path = self.project_dir / "icon.png"
         
-        # 画一个简单的网络图标
-        dc.ellipse([16, 16, 48, 48], fill='white', outline='white')
-        dc.ellipse([28, 28, 36, 36], fill='#1e90ff', outline='#1e90ff')
+        if icon_path.exists():
+            try:
+                image = Image.open(icon_path)
+                # 调整图标大小为标准尺寸
+                image = image.resize((64, 64), Image.Resampling.LANCZOS)
+            except Exception as e:
+                print(f"加载图标文件失败: {e}，使用默认图标")
+                image = self._create_default_icon()
+        else:
+            # 如果 icon.png 不存在，使用默认图标
+            image = self._create_default_icon()
         
         # 创建托盘菜单
         menu = pystray.Menu(
@@ -333,6 +347,19 @@ class MainWindow:
             '校园网自动登录',
             menu
         )
+    
+    def _create_default_icon(self):
+        """创建默认图标（当 icon.png 不存在时）"""
+        width = 64
+        height = 64
+        image = Image.new('RGB', (width, height), color='#1e90ff')
+        dc = ImageDraw.Draw(image)
+        
+        # 画一个简单的网络图标
+        dc.ellipse([16, 16, 48, 48], fill='white', outline='white')
+        dc.ellipse([28, 28, 36, 36], fill='#1e90ff', outline='#1e90ff')
+        
+        return image
     
     def _show_window(self, icon=None, item=None):
         """从托盘显示窗口"""
@@ -403,6 +430,17 @@ class MainWindow:
         """测试登录"""
         if not self._check_click_interval('test_login'):
             return
+        
+        # 检查浏览器依赖是否已安装
+        if not check_browser_installed():
+            messagebox.showwarning(
+                "浏览器未安装",
+                "检测到 Playwright 浏览器驱动未安装。\n\n"
+                "请点击【📦 安装依赖】按钮进行安装。\n\n"
+                "安装后即可正常使用登录功能。"
+            )
+            return
+        
         if not self.username or not self.password:
             messagebox.showwarning("配置错误", "请先配置账号密码！")
             return
@@ -447,6 +485,16 @@ class MainWindow:
     
     def start_monitor(self):
         """开始监控"""
+        # 检查浏览器依赖是否已安装
+        if not check_browser_installed():
+            messagebox.showwarning(
+                "浏览器未安装",
+                "检测到 Playwright 浏览器驱动未安装。\n\n"
+                "请点击【📦 安装依赖】按钮进行安装。\n\n"
+                "安装后即可正常使用监控功能。"
+            )
+            return
+        
         if not self.username or not self.password:
             messagebox.showwarning("配置错误", "请先配置账号密码！")
             return
@@ -568,18 +616,117 @@ class MainWindow:
             threading.Thread(target=self._do_install_dependencies, daemon=True).start()
     
     def _do_install_dependencies(self):
-        """执行安装依赖"""
+        """执行安装依赖，实时显示进度"""
+        import subprocess
+        
         try:
-            install_playwright_browsers()
+            # 设置浏览器下载路径
+            browsers_path_config = self.browsers_path
             
-            self.append_log("=" * 60)
-            self.append_log("✅ Playwright 浏览器驱动安装成功！")
-            self.append_log("=" * 60)
+            # 处理相对路径和绝对路径
+            if not os.path.isabs(browsers_path_config):
+                browsers_path = self.project_dir / browsers_path_config
+            else:
+                browsers_path = Path(browsers_path_config)
             
-            self.root.after(0, lambda: messagebox.showinfo("安装完成", "Playwright 浏览器驱动安装成功！"))
-            self.update_status("依赖安装完成")
+            # 创建目录
+            browsers_path.mkdir(parents=True, exist_ok=True)
+            
+            self.append_log(f"浏览器将安装到: {browsers_path}")
+            self.append_log(f"下载镜像源: {self.download_host}")
+            self.append_log("")
+            
+            # 设置环境变量
+            env = os.environ.copy()
+            env["PLAYWRIGHT_BROWSERS_PATH"] = str(browsers_path)
+            env["PLAYWRIGHT_DOWNLOAD_HOST"] = self.download_host
+            
+            # 构建安装命令
+            if getattr(sys, 'frozen', False):
+                # 打包后的环境
+                self.append_log("检测到打包环境，使用内置 playwright 驱动...")
+                
+                # 在打包环境中，playwright驱动位于 _internal/playwright/driver 目录
+                exe_dir = Path(sys.executable).parent
+                internal_dir = exe_dir / "_internal"
+                
+                # 尝试多个可能的路径
+                driver_paths = [
+                    internal_dir / "playwright" / "driver" / "node.exe",  # 正确的node.exe路径
+                    internal_dir / "playwright" / "driver" / "package" / "lib" / "cli" / "cli.js",  # CLI脚本
+                ]
+                
+                driver_executable = None
+                for path in driver_paths:
+                    if path.exists():
+                        driver_executable = path
+                        self.append_log(f"找到驱动: {driver_executable}")
+                        break
+                
+                if driver_executable is None:
+                    self.append_log("❌ 未找到playwright驱动文件")
+                    raise FileNotFoundError("未找到playwright驱动文件")
+                
+                # 使用node.exe执行playwright CLI
+                node_exe = internal_dir / "playwright" / "driver" / "node.exe"
+                cli_js = internal_dir / "playwright" / "driver" / "package" / "cli.js"
+                
+                if node_exe.exists() and cli_js.exists():
+                    cmd = [str(node_exe), str(cli_js), "install", "chromium"]
+                    env_to_use = env
+                    self.append_log(f"使用 node.exe 执行安装")
+                else:
+                    self.append_log("❌ 缺少必要的驱动文件")
+                    raise FileNotFoundError(f"node.exe或cli.js不存在: node={node_exe.exists()}, cli={cli_js.exists()}")
+            else:
+                # 开发环境
+                cmd = [sys.executable, "-m", "playwright", "install", "chromium"]
+                env_to_use = env
+            
+            self.append_log(f"执行命令: {' '.join(cmd)}")
+            self.append_log("")
+            
+            # 实时执行命令并捕获输出
+            process = subprocess.Popen(
+                cmd,
+                env=env_to_use,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                universal_newlines=True,
+                encoding='utf-8',
+                errors='replace'
+            )
+            
+            # 实时读取输出
+            for line in iter(process.stdout.readline, ''):
+                if line:
+                    self.append_log(line.rstrip())
+            
+            process.stdout.close()
+            return_code = process.wait()
+            
+            if return_code == 0:
+                self.append_log("")
+                self.append_log("=" * 60)
+                self.append_log("✅ Playwright 浏览器驱动安装成功！")
+                self.append_log(f"✅ 安装位置: {browsers_path}")
+                self.append_log("=" * 60)
+                
+                self.root.after(0, lambda: messagebox.showinfo("安装完成", "Playwright 浏览器驱动安装成功！"))
+                self.update_status("依赖安装完成")
+            else:
+                self.append_log("")
+                self.append_log(f"❌ 安装失败，退出码: {return_code}")
+                self.root.after(0, lambda: messagebox.showerror(
+                    "安装失败",
+                    f"安装失败，退出码: {return_code}\n\n请查看日志了解详细错误信息。"
+                ))
+                self.update_status("依赖安装失败")
             
         except Exception as e:
+            self.append_log("")
             self.append_log(f"❌ 安装失败: {str(e)}")
             self.root.after(0, lambda: messagebox.showerror(
                 "安装失败",
@@ -708,43 +855,8 @@ def check_browser_installed():
 
 def main():
     """主函数"""
-    # 检查浏览器是否已安装
-    if not check_browser_installed():
-        root = tk.Tk()
-        root.withdraw()
-        
-        reply = messagebox.askyesno(
-            "首次运行",
-            "检测到 Playwright 浏览器未安装。\n\n"
-            "是否现在安装？（约 170 MB，使用国内镜像加速）\n\n"
-            "安装过程中请勿关闭程序。"
-        )
-        
-        if reply:
-            try:
-                install_playwright_browsers()
-                messagebox.showinfo(
-                    "安装完成",
-                    "Playwright 浏览器驱动安装成功！\n现在可以正常使用程序了。"
-                )
-            except Exception as e:
-                messagebox.showerror(
-                    "安装失败",
-                    f"浏览器驱动安装失败：{str(e)}\n\n"
-                    "请手动运行: python setup.py"
-                )
-                sys.exit(1)
-        else:
-            messagebox.showwarning(
-                "取消安装",
-                "未安装浏览器驱动，程序将退出。\n\n"
-                "您可以稍后手动运行: python setup.py"
-            )
-            sys.exit(0)
-        
-        root.destroy()
-    
-    # 创建并运行主窗口
+    # 直接创建并运行主窗口，不检查浏览器是否已安装
+    # 用户可以通过界面上的"安装依赖"按钮手动安装浏览器驱动
     app = MainWindow()
     app.run()
 

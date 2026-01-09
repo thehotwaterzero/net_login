@@ -27,6 +27,7 @@ a = Analysis(
         'playwright._impl._connection',
         'playwright._impl._transport',
         'playwright._impl._helper',
+        'playwright._impl._driver',
         
         # GUI 相关
         'tkinter',

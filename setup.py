@@ -50,12 +50,40 @@ def setup():
         env["PLAYWRIGHT_BROWSERS_PATH"] = browsers_path
         env["PLAYWRIGHT_DOWNLOAD_HOST"] = download_host
         
-        # 不捕获输出，让进度信息实时显示
-        result = subprocess.run(
-            [sys.executable, "-m", "playwright", "install", "chromium"],
-            check=True,
-            env=env
-        )
+        # 检测是否在打包环境中运行
+        if getattr(sys, 'frozen', False):
+            # 打包后的环境，直接使用 playwright 模块
+            print("检测到打包环境，使用内置 playwright 模块...")
+            try:
+                from playwright._impl._driver import compute_driver_executable, get_driver_env
+                driver_executable = compute_driver_executable()
+                driver_env = get_driver_env()
+                driver_env.update(env)
+                
+                result = subprocess.run(
+                    [str(driver_executable), "install", "chromium"],
+                    check=True,
+                    env=driver_env,
+                    capture_output=False
+                )
+            except ImportError:
+                # 降级方案：尝试查找 playwright 可执行文件
+                print("尝试查找 playwright 命令...")
+                playwright_cmd = "playwright"
+                result = subprocess.run(
+                    [playwright_cmd, "install", "chromium"],
+                    check=True,
+                    env=env,
+                    capture_output=False,
+                    shell=True
+                )
+        else:
+            # 开发环境，使用 python -m playwright
+            result = subprocess.run(
+                [sys.executable, "-m", "playwright", "install", "chromium"],
+                check=True,
+                env=env
+            )
         
         print("\n" + "=" * 60)
         print("✓ Playwright 浏览器驱动安装成功!")
