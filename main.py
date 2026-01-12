@@ -53,7 +53,7 @@ class CampusNetworkLogin:
         try:
             with sync_playwright() as p:
                 browser = p.chromium.launch(headless=True)
-                context = browser.new_context()
+                context = browser.new_context(ignore_https_errors=True)
                 page = context.new_page()
                 
                 logger.info("正在检查网络状态...")
@@ -106,7 +106,8 @@ class CampusNetworkLogin:
                 )
                 context = browser.new_context(
                     viewport={'width': 1280, 'height': 720},
-                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    ignore_https_errors=True
                 )
                 page = context.new_page()
                 

@@ -44,7 +44,8 @@ class LoginWorker(threading.Thread):
                 browser = p.chromium.launch(headless=False, slow_mo=500)
                 context = browser.new_context(
                     viewport={'width': 1280, 'height': 720},
-                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    ignore_https_errors=True
                 )
                 page = context.new_page()
                 
@@ -132,7 +133,7 @@ class MonitorWorker(threading.Thread):
                 
                 with sync_playwright() as p:
                     browser = p.chromium.launch(headless=True)
-                    context = browser.new_context()
+                    context = browser.new_context(ignore_https_errors=True)
                     page = context.new_page()
                     
                     page.goto(self.login_url, timeout=10000)
